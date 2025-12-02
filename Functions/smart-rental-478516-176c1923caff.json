@@ -1,0 +1,13 @@
+{
+  "type": "service_account",
+  "project_id": "smart-rental-478516",
+  "private_key_id": "176c1923caff265a0a3cd9f9ea34818594df0552",
+  "private_key": "-----BEGIN PRIVATE KEY-----\nMIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgwggSkAgEAAoIBAQCqsOqeT0mY2319\najpxTNWzr9HpBM0t+/lxccwcSo1fHIxqDAGK738AgfGARs1L2nK+USjDzlfiIWBb\nWysV4EfG171wRJQgp6EHUiD84bhQAjlXNYUzkFXzpl2qWcIie5h415qEIRBfiOnJ\nc6bGv95DaUD9WKGrTCSSpqLhXvX+LOJI2aUM7b1R7B/1wCVnM9J6OYtf+4MTs0QY\nS2Q4GSZ5zaDWgfJBVjmZ8w0fjgfLk4BJF/yxRMwD9Dm1HCSELLug/MILjjwTllVX\nUF9ez7w13s3IkWdHE0UQ4d4qfml3T6U3RtNkjoGoB6p5e43EoTqLC14u/4eZP8U1\nswuuUrdHAgMBAAECggEAS5/Okw014k98rdAezIvqMo43RjImZbU5sxVkBTTSpc0U\nOPfQxymM70CjKt4znuPN6pwyn24QadO3yUH/ONYBdwumltMLfdxG7+NnUiL/chNK\nLGU9+rZ8HlMbNJpH9NclmoSLpPaxNmKGkgZ3YZ8obl13ucdG+YnmukKx74APJOks\nfhTrFQdsZcDgKtF/MyHTDz9bsa8DuC9trcwHGewSP19pWNlj/yEHvj1QcwBQFG5d\nwYLfGgx0AtERsI6vR2VuPGdGgXqVTqAXY8/gFKUIYFN8SXiI3LPMv9MK+f5QuTUd\n4A4KxvmDEAc9Xeo9bjN+vDTdfVg6DXboXQFrvWgfAQKBgQDamCXVcUFNmWDCaJoh\nmvNOJvLEwYWgLwalPjzeSJSHKHiBrc5hBhiOA4/bYevOahNjMbWiCv+OHqyQVIkn\naVh0mh1/38AXwxLNx2LOAKO0iDYuaxpokbmqDWKVbfu2Y0pclGtgcaWV4NiChTf0\npAhYdn3ptykppuv3eC4Add5YJwKBgQDH5kuNgFrsPJtA8++Uqth2EXKfHHq0mGZ1\neSoX/hcnRnStz1jar+TF8CGuOpyW776EJC4wf3InOcTjhHjkk4FQ66sS1jQkuh/0\nSjZk7Wo7MNn9hLWSkfjJN1dEY7KsYbtfg4qOzOzaV8G/M8hY5yzRb+WAKDnA48D5\nDGUxCV/74QKBgQDaOIOkhhCsOA8JZUVhgP+dqHI5C/yrQeb/dZdsTMbB+xv6UZmy\n8FP5CgNF/oZapTi/kPODVjlzFpos58eYKamdlfEXJDbvQdX2yjKP9sF2y3hTdKaD\nd98CraQaCxb7KDonHB/pwuqMKk/aVMXcmxidv4TJmgkkxLfScA50dTbHhwKBgQCW\ntyfXtCLZYoib3E+Sg41Y16bYGBzb9NurToNSO50xW4m1UlPn7h5KrtZ2CnLtyiyW\nbMD2h+CFeqTb9ZFApYYmgMknFqGR31MgWKPSTL5/ikGRR3Gu5Kfy7eq6AYFBPx6K\n0R6ytAcQSIInqt8vSH0eG4OpsKp6qD1iiNnysuLPgQKBgBHxkLgZcoNlBAJ8mO+/\ncsYa3QTaSSWTr9FVi0PqGtNd+q1obvqIB8QWpKEZcIA5t1Y3D15zIoFzD2OMQdrs\ntyUEr3Pc12J8fU70bzzNgulc9hqXiH/D0pNr/Z9PXvv3zJ/mNqWXAyH+EXM3fd9y\n7FjZ0V/ULPm/IDVTHsKX+VgJ\n-----END PRIVATE KEY-----\n",
+  "client_email": "rg-sr-bot@smart-rental-478516.iam.gserviceaccount.com",
+  "client_id": "106770069291069247765",
+  "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+  "token_uri": "https://oauth2.googleapis.com/token",
+  "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
+  "client_x509_cert_url": "https://www.googleapis.com/robot/v1/metadata/x509/rg-sr-bot%40smart-rental-478516.iam.gserviceaccount.com",
+  "universe_domain": "googleapis.com"
+}

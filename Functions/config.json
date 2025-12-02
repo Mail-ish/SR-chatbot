@@ -1,0 +1,33 @@
+{
+  "database": {
+    "server": "",
+    "name": "",
+    "username": "",
+    "password": "",
+    "port": 1433,
+    "timeout": 30
+  },
+  "wati": {
+    "api_key": "",
+    "endpoint": "https://api.wati.io/v1/messages"
+  },
+  "openai": {
+    "api_key": "",
+    "model": "gpt-4o-mini",
+    "temperature": 0.0,
+    "max_tokens": 500
+  },
+  "google_sheets": {
+    "service_account_file": "C:/Users/user/Downloads/chatbot-core-e740344e-950b-44e2-a32d-6e3bab3303af/python/Functions/smart-rental-478516-176c1923caff.json"
+  },
+  "google_drive": {
+    "service_account_file": "C:/Users/user/Downloads/chatbot-core-e740344e-950b-44e2-a32d-6e3bab3303af/python/Functions/smart-rental-478516-176c1923caff.json",
+    "shared_drive_id": "104lrYw0k_ohnPCFCpFGhnBktSekP_8MN"
+  },
+  "inquiry_bot": {
+    "contract_report_sheet_id": "17kaq3n07ZUknm2OgpvMfoaoXU3tuuRxQCC1ChwHDlEk",
+    "contract_report_sheet_name": "Contract Report",
+    "account_statement_sheet_id": "1dk-iP5a0iSbXzdNN0ZF_9uCHfSFVUMVVONX0w1xN_yw",
+    "account_statement_summary_sheet": "Account Statement - summarised"
+  }
+}
