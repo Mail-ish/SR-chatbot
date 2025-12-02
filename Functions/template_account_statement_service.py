@@ -247,7 +247,7 @@ class TemplateAccountStatementService:
             logger.info(f"Fetching contract data for: {contract_ids}")
             
             data = self.sheets_client.read_range(
-                f"{self.CONTRACT_REPORT_SHEET}!A:M",
+                f"{self.CONTRACT_REPORT_SHEET}!A:L",
                 sheet_id=self.CONTRACT_REPORT_SHEET_ID,
                 use_cache=False
             )
@@ -266,7 +266,6 @@ class TemplateAccountStatementService:
             customer_code_idx = header_map.get("customer code")
             start_date_idx = header_map.get("start date")
             end_date_idx = header_map.get("end date")
-            email_idx = header_map.get("email")
             
             contracts = []
             contract_ids_lower = [cid.strip().lower() for cid in contract_ids]
@@ -283,8 +282,7 @@ class TemplateAccountStatementService:
                             'delivery_address': row[delivery_address_idx] if delivery_address_idx and len(row) > delivery_address_idx else '',
                             'customer_code': row[customer_code_idx] if customer_code_idx and len(row) > customer_code_idx else '',
                             'start_date': row[start_date_idx] if start_date_idx and len(row) > start_date_idx else '',
-                            'end_date': row[end_date_idx] if end_date_idx and len(row) > end_date_idx else '',
-                            'email': row[email_idx] if email_idx and len(row) > email_idx else ''
+                            'end_date': row[end_date_idx] if end_date_idx and len(row) > end_date_idx else ''
                         }
                         contracts.append(contract)
             
@@ -393,7 +391,7 @@ class TemplateAccountStatementService:
             for sheet_name in sheet_names:
                 try:
                     data = self.sheets_client.read_range(
-                        f"{sheet_name}!A:K",
+                        f"{sheet_name}!A:I",
                         sheet_id=self.ACCOUNT_STATEMENT_SHEET_ID,
                         use_cache=False
                     )
@@ -624,13 +622,6 @@ Return ONLY a JSON object with this exact format (no additional text):
                 {'range': f'{self.SINGLE_TEMPLATE_SHEET}!A12', 'values': [[line2]]},
                 {'range': f'{self.SINGLE_TEMPLATE_SHEET}!A13', 'values': [[line3]]}
             ])
-
-            # Customer email (A14)
-            customer_email = f"EMAIL: {contract_info.get('email', '')}"
-            updates.append({
-                'range': f'{self.SINGLE_TEMPLATE_SHEET}!A14',
-                'values': [[customer_email]]
-            })
             
             # Customer code (I10)
             updates.append({
@@ -652,14 +643,13 @@ Return ONLY a JSON object with this exact format (no additional text):
             ])
             
             # Planet points (D26)
-            earned_pp = f": {[planet_points]}"
             updates.append({
                 'range': f'{self.SINGLE_TEMPLATE_SHEET}!D26',
-                'values': [[earned_pp]]
+                'values': [[planet_points]]
             })
             
             # Contract header (A16)
-            contract_header = f"CONTRACT #{contract_info.get('contract_id', '')} ({contract_info.get('start_date', '')} - {contract_info.get('end_date', '')})"
+            contract_header = f"{contract_info.get('contract_id', '')} | {contract_info.get('start_date', '')} | {contract_info.get('end_date', '')}"
             updates.append({
                 'range': f'{self.SINGLE_TEMPLATE_SHEET}!A16',
                 'values': [[contract_header]]
@@ -668,52 +658,10 @@ Return ONLY a JSON object with this exact format (no additional text):
             # Batch update all cells (except invoice details)
             self.sheets_client.batch_update(updates, sheet_id=spreadsheet_id)
 
-            ### Invoice details - insert rows after contract header row 16
+            # Invoice details - insert rows after contract header row 16
             if detail_data:
-
-                # --- NEW: normalize invoice/receipt dates so "2023-03" → "01/03/2023" ---
-                def normalize_date(val):
-                    if not val:
-                        return ''
-                    if isinstance(val, str) and len(val) == 7 and val.count('-') == 1:
-                        # Convert YYYY-MM → 01/MM/YYYY
-                        year, month = val.split('-')
-                        return f"01/{month}/{year}"
-                    return val
-
-                # --- NEW: split receipts + invoices ---
-                invoices = []
-                receipts = []
-
-                for d in detail_data:
-                    entry = {
-                        'invoice no.': d.get('invoice no.', ''),
-                        'month': normalize_date(d.get('month')),
-                        'invoiced amount': d.get('invoiced amount', ''),
-                        'payment status': d.get('payment status', ''),
-                        'paid at': normalize_date(d.get('paid at')),
-                        'total paid': d.get('total paid', ''),
-                        'outstanding amount': d.get('outstanding amount', ''),
-                        'type': d.get('type', 'invoice')  # assume missing => invoice
-                    }
-
-                    if entry['type'] == 'receipt':
-                        receipts.append(entry)
-                    else:
-                        invoices.append(entry)
-
-                # --- NEW: sort each group by month/date ---
-                def sort_key(x):
-                    return x['month'] or ''
-
-                invoices.sort(key=sort_key)
-                receipts.sort(key=sort_key)
-
-                # Merge in order → invoices first, then receipts
-                sorted_details = invoices + receipts
-
                 # Total rows needed: detail rows + 1 balance summary row
-                num_rows_to_insert = len(sorted_details) + 1
+                num_rows_to_insert = len(detail_data) + 1
 
                 # Insert rows starting at row 17 (after contract header at row 16)
                 self.insert_rows_with_formatting(
@@ -724,9 +672,9 @@ Return ONLY a JSON object with this exact format (no additional text):
                     source_row=15  # Copy formatting from header row 15
                 )
 
-                # Fill the detail rows with data (same structure as before)
+                # Fill the detail rows with data
                 detail_rows = []
-                for detail in sorted_details:
+                for detail in detail_data:
                     row = [
                         detail.get('invoice no.', ''),
                         detail.get('month', ''),
@@ -738,7 +686,7 @@ Return ONLY a JSON object with this exact format (no additional text):
                     ]
                     detail_rows.append(row)
 
-                # Add BALANCE summary row (unchanged)
+                # Add BALANCE summary row
                 balance_row = ['', '', '', '', 'BALANCE:', summary_data.get('outstanding', 0), planet_points]
                 detail_rows.append(balance_row)
 
@@ -750,7 +698,7 @@ Return ONLY a JSON object with this exact format (no additional text):
                 self.sheets_client.batch_update(detail_updates, sheet_id=spreadsheet_id)
 
                 # Apply yellow background to contract header (row 16) and balance row
-                balance_row_index = 17 + len(sorted_details) - 1
+                balance_row_index = 17 + len(detail_data) - 1  # Last inserted row
                 self.apply_row_formatting(
                     spreadsheet_id=spreadsheet_id,
                     sheet_name=self.SINGLE_TEMPLATE_SHEET,
@@ -758,7 +706,7 @@ Return ONLY a JSON object with this exact format (no additional text):
                     background_color={'red': 1.0, 'green': 0.9, 'blue': 0.6}  # Yellow
                 )
 
-            logger.info(f"Single template filled with {len(detail_data) if detail_data else 0} rows")            
+            logger.info(f"Single template filled with {len(detail_data) if detail_data else 0} invoice rows")
             
         except Exception as e:
             logger.error(f"Error filling single template: {e}", exc_info=True)
