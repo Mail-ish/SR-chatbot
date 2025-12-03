@@ -305,6 +305,22 @@ class TemplateAccountStatementService:
         Returns:
             Dictionary with total_invoiced, total_paid, outstanding
         """
+        def parse_currency(val):
+            """Convert 'RM 6,065.28' → 6065.28"""
+            try:
+                if not val:
+                    return 0.0
+                return float(str(val).replace("RM", "").replace(",", "").strip())
+            except Exception:
+                return 0.0
+
+        def format_currency(value):
+            """Convert 6065.28 → 'RM 6,065.28'"""
+            try:
+                return f"RM {value:,.2f}"
+            except Exception:
+                return "RM 0.00"
+
         try:
             logger.info(f"Fetching account summary for: {contract_ids}")
             
@@ -315,7 +331,7 @@ class TemplateAccountStatementService:
             )
             
             if not data or len(data) < 2:
-                return {'total_invoiced': 0, 'total_paid': 0, 'outstanding': 0}
+                return {'total_invoiced': "RM 0.00", 'total_paid': "RM 0.00", 'outstanding': "RM 0.00"}
             
             headers = data[0]
             header_map = {h.strip().lower(): idx for idx, h in enumerate(headers)}
@@ -332,39 +348,39 @@ class TemplateAccountStatementService:
             contract_ids_lower = [cid.strip().lower() for cid in contract_ids]
             
             for row in data[1:]:
-                if contract_id_idx and len(row) > contract_id_idx:
+                if contract_id_idx is not None and len(row) > contract_id_idx:
                     row_contract_id = str(row[contract_id_idx]).strip().lower()
                     
                     if row_contract_id in contract_ids_lower:
-                        try:
-                            if total_invoiced_idx and len(row) > total_invoiced_idx:
-                                total_invoiced += float(row[total_invoiced_idx] or 0)
-                        except (ValueError, TypeError):
-                            pass
-                        
-                        try:
-                            if total_paid_idx and len(row) > total_paid_idx:
-                                total_paid += float(row[total_paid_idx] or 0)
-                        except (ValueError, TypeError):
-                            pass
-                        
-                        try:
-                            if outstanding_idx and len(row) > outstanding_idx:
-                                outstanding += float(row[outstanding_idx] or 0)
-                        except (ValueError, TypeError):
-                            pass
+
+                        # --- Replace float(...) with parse_currency(val) ---
+                        if total_invoiced_idx is not None and len(row) > total_invoiced_idx:
+                            total_invoiced += parse_currency(row[total_invoiced_idx])
+
+                        if total_paid_idx is not None and len(row) > total_paid_idx:
+                            total_paid += parse_currency(row[total_paid_idx])
+
+                        if outstanding_idx is not None and len(row) > outstanding_idx:
+                            outstanding += parse_currency(row[outstanding_idx])
             
-            logger.info(f"Summary totals: invoiced={total_invoiced}, paid={total_paid}, outstanding={outstanding}")
+            logger.info(
+                f"Summary totals: invoiced={total_invoiced}, paid={total_paid}, outstanding={outstanding}"
+            )
             
+            # --- Format output as "RM 0,000.00" ---
             return {
-                'total_invoiced': total_invoiced,
-                'total_paid': total_paid,
-                'outstanding': outstanding
+                'total_invoiced': format_currency(total_invoiced),
+                'total_paid': format_currency(total_paid),
+                'outstanding': format_currency(outstanding)
             }
             
         except Exception as e:
             logger.error(f"Error fetching summary data: {e}", exc_info=True)
-            return {'total_invoiced': 0, 'total_paid': 0, 'outstanding': 0}
+            return {
+                'total_invoiced': "RM 0.00",
+                'total_paid': "RM 0.00",
+                'outstanding': "RM 0.00"
+            }
     
     def get_account_detail_data(self, contract_ids: List[str]) -> List[Dict]:
         """
@@ -380,13 +396,29 @@ class TemplateAccountStatementService:
             logger.info(f"Fetching account details for: {contract_ids}")
             
             all_details = []
-            sheet_names = [
-                "Account Statement",
-                "Account Statement (2)",
-                "Account Statement (3)",
-                "Account Statement (4)",
-                "Account Statement (5)"
-            ]
+            # --- Get sheet metadata once ---
+            sheet_names = []
+            base_name = "Account Statement"
+
+            for i in range(1, 6):  # Allow up to "(5)" just in case
+                if i == 1:
+                    name = base_name
+                else:
+                    name = f"{base_name} ({i})"
+
+                try:
+                    # Try reading header row only (faster)
+                    self.sheets_client.read_range(
+                        f"{name}!A:K",
+                        sheet_id=self.ACCOUNT_STATEMENT_SHEET_ID,
+                        use_cache=False
+                    )
+                    sheet_names.append(name)
+                except Exception:
+                    # No more sheets exist → break cleanly
+                    break
+
+            logger.info(f"Detected Account Statement sheets: {sheet_names}")
             
             contract_ids_lower = [cid.strip().lower() for cid in contract_ids]
             
@@ -407,7 +439,7 @@ class TemplateAccountStatementService:
                     contract_id_idx = header_map.get("contract id")
                     
                     for row in data[1:]:
-                        if contract_id_idx and len(row) > contract_id_idx:
+                        if contract_id_idx is not None and len(row) > contract_id_idx:
                             row_contract_id = str(row[contract_id_idx]).strip().lower()
                             
                             if row_contract_id in contract_ids_lower:
@@ -652,7 +684,7 @@ Return ONLY a JSON object with this exact format (no additional text):
             ])
             
             # Planet points (D26)
-            earned_pp = f": {[planet_points]}"
+            earned_pp = f": {planet_points}"
             updates.append({
                 'range': f'{self.SINGLE_TEMPLATE_SHEET}!D26',
                 'values': [[earned_pp]]
@@ -671,75 +703,114 @@ Return ONLY a JSON object with this exact format (no additional text):
             ### Invoice details - insert rows after contract header row 16
             if detail_data:
 
-                # --- NEW: normalize invoice/receipt dates so "2023-03" → "01/03/2023" ---
+                # --- NORMALIZE DATE ---
                 def normalize_date(val):
                     if not val:
                         return ''
                     if isinstance(val, str) and len(val) == 7 and val.count('-') == 1:
-                        # Convert YYYY-MM → 01/MM/YYYY
+                        # YYYY-MM → 01/MM/YYYY
                         year, month = val.split('-')
                         return f"01/{month}/{year}"
                     return val
 
-                # --- NEW: split receipts + invoices ---
+                # --- PARSE & CLASSIFY ENTRIES ---
                 invoices = []
                 receipts = []
 
                 for d in detail_data:
+                    invoice_no = d.get("invoice no.", "")
+                    receipt_no = d.get("receipt no.", "")
+
                     entry = {
-                        'invoice no.': d.get('invoice no.', ''),
+                        'invoice no': invoice_no,
+                        'receipt no': receipt_no,
                         'month': normalize_date(d.get('month')),
-                        'invoiced amount': d.get('invoiced amount', ''),
+                        'invoiced amount': d.get('debit', ''),
                         'payment status': d.get('payment status', ''),
                         'paid at': normalize_date(d.get('paid at')),
-                        'total paid': d.get('total paid', ''),
-                        'outstanding amount': d.get('outstanding amount', ''),
-                        'type': d.get('type', 'invoice')  # assume missing => invoice
+                        'paid amount': d.get('credit', ''),
+                        'outstanding amount': d.get('balance', '')
                     }
 
-                    if entry['type'] == 'receipt':
+                    # --- FILTER OUT missing invoices ---
+                    if invoice_no == "Missing Invoice":
+                        continue
+
+                    # --- CLASSIFY RECEIPTS ---
+                    if receipt_no and receipt_no != "-":
                         receipts.append(entry)
                     else:
                         invoices.append(entry)
 
-                # --- NEW: sort each group by month/date ---
-                def sort_key(x):
-                    return x['month'] or ''
 
-                invoices.sort(key=sort_key)
-                receipts.sort(key=sort_key)
+                def date_key(x):
+                    try:
+                        return datetime.strptime(x['month'], "%d/%m/%Y")
+                    except:
+                        return datetime.min
 
-                # Merge in order → invoices first, then receipts
+                invoices.sort(key=date_key)
+                receipts.sort(key=date_key)
+
+                # FINAL MERGED LIST
                 sorted_details = invoices + receipts
 
                 # Total rows needed: detail rows + 1 balance summary row
-                num_rows_to_insert = len(sorted_details) + 1
+                num_rows_to_insert = 2 * len(sorted_details)
 
                 # Insert rows starting at row 17 (after contract header at row 16)
                 self.insert_rows_with_formatting(
                     spreadsheet_id=spreadsheet_id,
                     sheet_name=self.SINGLE_TEMPLATE_SHEET,
                     start_row=17,
-                    num_rows=num_rows_to_insert,
-                    source_row=15  # Copy formatting from header row 15
+                    num_rows=num_rows_to_insert - 1,
+                    source_row=17  # Copy formatting from detail row 17
                 )
 
                 # Fill the detail rows with data (same structure as before)
                 detail_rows = []
                 for detail in sorted_details:
-                    row = [
-                        detail.get('invoice no.', ''),
-                        detail.get('month', ''),
-                        detail.get('invoiced amount', ''),
-                        detail.get('payment status', ''),
-                        detail.get('paid at', ''),
-                        detail.get('total paid', ''),
-                        detail.get('outstanding amount', '')
-                    ]
-                    detail_rows.append(row)
+                    invoice_no = detail.get('invoice no', '')
+                    receipt_no = detail.get('receipt no', '')
+                    
+                    # Case 1: Invoice with receipt
+                    if invoice_no and invoice_no != "Missing Invoice" and receipt_no and receipt_no != "-":
+                        # Invoice row
+                        invoice_row = [
+                            detail.get('month', ''),
+                            invoice_no + f"    " + detail.get('payment status', ''),
+                            "",
+                            "",
+                            detail.get('invoiced amount', ''),
+                            "",  # paid amount empty
+                        ]
+                        detail_rows.append(invoice_row)
 
-                # Add BALANCE summary row (unchanged)
-                balance_row = ['', '', '', '', 'BALANCE:', summary_data.get('outstanding', 0), planet_points]
+                        # Receipt row
+                        receipt_row = [
+                            detail.get('paid at', ''),
+                            receipt_no + f" for " + invoice_no,
+                            "",
+                            "",
+                            "",
+                            detail.get('paid amount', ''),
+                        ]
+                        detail_rows.append(receipt_row)
+
+                    # Case 2: Invoice without receipt
+                    elif invoice_no and invoice_no != "Missing Invoice" and (not receipt_no or receipt_no == "-"):
+                        row = [
+                            detail.get('month', ''),
+                            invoice_no + f"    " + detail.get('payment status', ''),
+                            "",
+                            "",
+                            detail.get('invoiced amount', ''),
+                            detail.get('paid amount', ''),
+                        ]
+                        detail_rows.append(row)
+
+                # Add BALANCE summary row
+                balance_row = ['', '', '', '', '', 'BALANCE:', summary_data.get('outstanding', 0), planet_points]
                 detail_rows.append(balance_row)
 
                 # Update the data in the inserted rows
@@ -748,15 +819,7 @@ Return ONLY a JSON object with this exact format (no additional text):
                     'values': detail_rows
                 }]
                 self.sheets_client.batch_update(detail_updates, sheet_id=spreadsheet_id)
-
-                # Apply yellow background to contract header (row 16) and balance row
-                balance_row_index = 17 + len(sorted_details) - 1
-                self.apply_row_formatting(
-                    spreadsheet_id=spreadsheet_id,
-                    sheet_name=self.SINGLE_TEMPLATE_SHEET,
-                    rows_to_format=[16, balance_row_index],
-                    background_color={'red': 1.0, 'green': 0.9, 'blue': 0.6}  # Yellow
-                )
+                
 
             logger.info(f"Single template filled with {len(detail_data) if detail_data else 0} rows")            
             
@@ -1054,7 +1117,7 @@ Return ONLY a JSON object with this exact format (no additional text):
         source_row: int
     ):
         """
-        Insert rows and copy formatting from a source row.
+        Insert rows and copy full formatting (including borders) from a source row.
 
         Args:
             spreadsheet_id: Spreadsheet ID
@@ -1077,59 +1140,110 @@ Return ONLY a JSON object with this exact format (no additional text):
                 logger.error(f"Sheet '{sheet_name}' not found")
                 return
 
-            # Use Sheets API batchUpdate to insert rows
             service = self.sheets_client.get_service()
             if not service:
                 logger.error("Failed to get Sheets service")
                 return
 
-            # Build requests
             requests_list = []
 
-            # 1. Insert dimension (rows)
+            # --- STEP 1: Insert empty rows ---
             requests_list.append({
                 'insertDimension': {
                     'range': {
                         'sheetId': sheet_gid,
                         'dimension': 'ROWS',
-                        'startIndex': start_row - 1,  # Convert to 0-indexed
-                        'endIndex': start_row - 1 + num_rows
+                        'startIndex': start_row,
+                        'endIndex': start_row + num_rows
                     },
-                    'inheritFromBefore': False  # Don't inherit from row above
+                    'inheritFromBefore': False
                 }
             })
 
-            # 2. Copy formatting from source row to inserted rows
+            # --- STEP 2: Copy general formatting from source row ---
             requests_list.append({
                 'copyPaste': {
                     'source': {
                         'sheetId': sheet_gid,
-                        'startRowIndex': source_row - 1,  # Convert to 0-indexed
+                        'startRowIndex': source_row - 1,
                         'endRowIndex': source_row,
                         'startColumnIndex': 0,
-                        'endColumnIndex': 10  # Copy columns A-J
+                        'endColumnIndex': 10  # A–J
                     },
                     'destination': {
                         'sheetId': sheet_gid,
-                        'startRowIndex': start_row - 1,  # Convert to 0-indexed
-                        'endRowIndex': start_row - 1 + num_rows,
+                        'startRowIndex': start_row,
+                        'endRowIndex': start_row + num_rows,
                         'startColumnIndex': 0,
                         'endColumnIndex': 10
                     },
-                    'pasteType': 'PASTE_FORMAT'  # Only copy formatting, not values
+                    'pasteType': 'PASTE_FORMAT'
                 }
             })
 
-            request_body = {
-                'requests': requests_list
-            }
+            # --- STEP 2.1: Copy formulas from source row ---
+            requests_list.append({
+                'copyPaste': {
+                    'source': {
+                        'sheetId': sheet_gid,
+                        'startRowIndex': source_row - 1,
+                        'endRowIndex': source_row,
+                        'startColumnIndex': 0,
+                        'endColumnIndex': 10
+                    },
+                    'destination': {
+                        'sheetId': sheet_gid,
+                        'startRowIndex': start_row,
+                        'endRowIndex': start_row + num_rows,
+                        'startColumnIndex': 0,
+                        'endColumnIndex': 10
+                    },
+                    'pasteType': 'PASTE_FORMULA'  # copy formulas only
+                }
+            })
 
-            service.spreadsheets().batchUpdate(
+            # --- STEP 3: Retrieve formatting from the source row ---
+            fmt_info = service.spreadsheets().get(
                 spreadsheetId=spreadsheet_id,
-                body=request_body
+                ranges=[f"{sheet_name}!A{source_row}:J{source_row}"],
+                fields="sheets.data.rowData.values.userEnteredFormat"
             ).execute()
 
-            logger.info(f"Inserted {num_rows} rows at row {start_row} with formatting from row {source_row}")
+            row_data = fmt_info['sheets'][0]['data'][0]['rowData'][0]['values']
+
+            # Safety: ensure 10 cells exist
+            if len(row_data) < 10:
+                logger.warning(f"Source row {source_row} returned only {len(row_data)} cells; padding missing cells.")
+                row_data += [{}] * (10 - len(row_data))
+
+            # --- STEP 4: Apply the borders cell-by-cell to all new rows ---
+            for r in range(num_rows):
+                for col_idx in range(10):  # A-J
+                    borders = row_data[col_idx].get('userEnteredFormat', {}).get('borders')
+                    if borders:
+                        requests_list.append({
+                            "updateBorders": {
+                                "range": {
+                                    "sheetId": sheet_gid,
+                                    "startRowIndex": start_row - 1 + r,
+                                    "endRowIndex": start_row - 1 + r + 1,
+                                    "startColumnIndex": col_idx,
+                                    "endColumnIndex": col_idx + 1
+                                },
+                                **borders  # Apply the exact same borders!
+                            }
+                        })
+
+            # --- EXECUTE ALL REQUESTS ---
+            service.spreadsheets().batchUpdate(
+                spreadsheetId=spreadsheet_id,
+                body={"requests": requests_list}
+            ).execute()
+
+            logger.info(
+                f"Inserted {num_rows} rows at row {start_row} "
+                f"with full formatting (incl. borders) from row {source_row}"
+            )
 
         except Exception as e:
             logger.error(f"Error inserting rows with formatting: {e}", exc_info=True)
@@ -1205,3 +1319,4 @@ Return ONLY a JSON object with this exact format (no additional text):
 
         except Exception as e:
             logger.error(f"Error applying row formatting: {e}", exc_info=True)
+
