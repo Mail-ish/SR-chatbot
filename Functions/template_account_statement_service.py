@@ -11,8 +11,14 @@ import re
 from io import BytesIO
 from datetime import datetime, timezone
 from typing import List, Dict, Optional, Tuple
+import gspread, requests
+import os
 
 logger = logging.getLogger(__name__)
+
+# Path relative to this Python file
+json_path = os.path.join(os.path.dirname(__file__), "smart-rental-478516-a8bff3c083a8.json")
+gc = gspread.service_account(filename=json_path)
 
 
 class TemplateAccountStatementService:
@@ -29,6 +35,7 @@ class TemplateAccountStatementService:
     # Account Statement data source
     ACCOUNT_STATEMENT_SHEET_ID = "1dk-iP5a0iSbXzdNN0ZF_9uCHfSFVUMVVONX0w1xN_yw"
     ACCOUNT_SUMMARY_SHEET = "Account Statement - summarised"
+    PLANET_POINT_SHEET = "Planet Point"
     
     # Contract Report data source
     CONTRACT_REPORT_SHEET_ID = "17kaq3n07ZUknm2OgpvMfoaoXU3tuuRxQCC1ChwHDlEk"
@@ -71,25 +78,28 @@ class TemplateAccountStatementService:
             
             summary_data = self.get_account_summary_data([contract_id])
             detail_data = self.get_account_detail_data([contract_id])
+            point_data = self.get_planet_points_data([contract_id])
+
             
-            # Get planet points (try customer name first, then company name)
+            # Get total planet points (try customer name first, then company name)
             user_name = contract_info.get('customer_name') or contract_info.get('company_name', '')
-            planet_points = self.get_planet_points(user_name)
+            total_planet_points = self.get_total_planet_points(user_name)
             
             # Create working copy of template
             timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
             working_copy_name = f"Statement_Single_{contract_id}_{timestamp}"
             
-            working_copy_id = self.drive_client.copy_file(
-                source_file_id=self.TEMPLATE_SHEET_ID,
-                destination_folder_id=self.WORKING_FOLDER_ID,
-                new_file_name=working_copy_name
+            working_copy_result = self.drive_client.copy_file(
+                file_id=self.TEMPLATE_SHEET_ID,
+                new_name=working_copy_name,
+                parent_folder_id=self.WORKING_FOLDER_ID
             )
-            
-            if not working_copy_id:
+
+            if not working_copy_result or 'id' not in working_copy_result:
                 logger.error("Failed to create working copy")
                 return None
-            
+
+            working_copy_id = working_copy_result['id']
             logger.info(f"Created working copy: {working_copy_id}")
             
             # Delete unused Multi sheet tab
@@ -101,7 +111,8 @@ class TemplateAccountStatementService:
                 contract_info,
                 summary_data,
                 detail_data,
-                planet_points
+                point_data,
+                total_planet_points
             )
 
             # Export as PDF bytes (with gridlines hidden)
@@ -109,7 +120,7 @@ class TemplateAccountStatementService:
             
             if not pdf_bytes:
                 logger.error("Failed to export PDF")
-                self.drive_client.delete_file(working_copy_id)
+                # Note: GoogleDriveClient doesn't have delete_file method - skipping cleanup
                 return None
             
             # Upload PDF to Drive
@@ -166,23 +177,24 @@ class TemplateAccountStatementService:
             
             # Get planet points using first contract's customer name
             user_name = contracts_data[0].get('customer_name') or contracts_data[0].get('company_name', '')
-            planet_points = self.get_planet_points(user_name)
+            total_planet_points = self.get_total_planet_points(user_name)
             
             # Create working copy of template
             timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
             customer_name_safe = (user_name[:20].replace(' ', '_').replace('/', '_'))
             working_copy_name = f"Statement_Multi_{customer_name_safe}_{timestamp}"
             
-            working_copy_id = self.drive_client.copy_file(
-                source_file_id=self.TEMPLATE_SHEET_ID,
-                destination_folder_id=self.WORKING_FOLDER_ID,
-                new_file_name=working_copy_name
+            working_copy_result = self.drive_client.copy_file(
+                file_id=self.TEMPLATE_SHEET_ID,
+                new_name=working_copy_name,
+                parent_folder_id=self.WORKING_FOLDER_ID
             )
-            
-            if not working_copy_id:
+
+            if not working_copy_result or 'id' not in working_copy_result:
                 logger.error("Failed to create working copy")
                 return None
-            
+
+            working_copy_id = working_copy_result['id']
             logger.info(f"Created working copy: {working_copy_id}")
             
             # Delete unused Single sheet tab
@@ -194,7 +206,7 @@ class TemplateAccountStatementService:
                 contracts_data,
                 summary_data,
                 details_by_contract,
-                planet_points
+                total_planet_points
             )
 
             # Export as PDF bytes (with gridlines hidden)
@@ -202,7 +214,7 @@ class TemplateAccountStatementService:
             
             if not pdf_bytes:
                 logger.error("Failed to export PDF")
-                self.drive_client.delete_file(working_copy_id)
+                # Note: GoogleDriveClient doesn't have delete_file method - skipping cleanup
                 return None
             
             # Upload PDF to Drive
@@ -459,9 +471,9 @@ class TemplateAccountStatementService:
             logger.error(f"Error fetching detail data: {e}", exc_info=True)
             return []
     
-    def get_planet_points(self, user_name: str) -> float:
+    def get_total_planet_points(self, user_name: str) -> float:
         """
-        Get total planet points for a user.
+        Get total planet points for a *USER*.
         
         Args:
             user_name: Customer/company name to match
@@ -500,7 +512,8 @@ class TemplateAccountStatementService:
                 if len(row) > user_name_idx:
                     row_user_name = str(row[user_name_idx]).strip().lower()
                     
-                    if user_name_lower in row_user_name or row_user_name in user_name_lower:
+                    # Exact match
+                    if row_user_name == user_name_lower:
                         try:
                             if len(row) > points_idx:
                                 total_points += float(row[points_idx] or 0)
@@ -508,12 +521,59 @@ class TemplateAccountStatementService:
                             pass
             
             logger.info(f"Total planet points: {total_points}")
-            return total_points
+            return round(total_points, 2)
             
         except Exception as e:
             logger.warning(f"Error fetching planet points: {e}")
             return 0.0
-    
+
+    def get_planet_points_data(self, contract_ids: List[str]) -> List[Dict]:
+        """
+        Get Planet Points records for a *CONTRACT*.
+        Args:
+            contract_ids: Lists of contract IDs 
+        
+        Returns:
+            list of planet point dictionaries
+        """
+        try:
+            logger.info(f"Fetching account summary for: {contract_ids}")
+            
+            all_pp_details = []
+            contract_ids_lower = [cid.strip().lower() for cid in contract_ids]
+
+            data = self.sheets_client.read_range(
+                f"{self.PLANET_POINT_SHEET}!A:G",
+                sheet_id=self.ACCOUNT_STATEMENT_SHEET_ID,
+                use_cache=False
+            )
+            
+            if not data or len(data) < 2:
+                logger.warning("Planet Point sheet is empty or not found")
+                return []
+            
+            headers = data[0]
+            header_map = {h.strip().lower(): idx for idx, h in enumerate(headers)}
+            
+            contract_id_idx = header_map.get("contract id")
+
+            for row in data[1:]:
+                if contract_id_idx is not None and len(row) > contract_id_idx:
+                    row_contract_id = str(row[contract_id_idx]).strip().lower()
+                    
+                    if row_contract_id in contract_ids_lower:
+                        pp_detail = {}
+                        for header, idx in header_map.items():
+                            pp_detail[header] = row[idx] if idx < len(row) else ''
+                        all_pp_details.append(pp_detail)
+
+            logger.info(f"Found {len(all_pp_details)} planet point details")
+            return all_pp_details
+
+        except Exception as e:
+            logger.error(f"Error fetching planet point detail data: {e}", exc_info=True)
+            return []
+
     def parse_delivery_address(self, address: str) -> Tuple[str, str, str]:
         """
         Parse delivery address into 3 lines with postcode at start of line 3.
@@ -625,7 +685,8 @@ Return ONLY a JSON object with this exact format (no additional text):
         contract_info: Dict,
         summary_data: Dict,
         detail_data: List[Dict],
-        planet_points: float
+        point_data: List[Dict],
+        total_planet_points: float
     ):
         """
         Fill Single template with data using Google Sheets API.
@@ -635,7 +696,7 @@ Return ONLY a JSON object with this exact format (no additional text):
             contract_info: Contract information dictionary
             summary_data: Summary totals dictionary
             detail_data: List of invoice details
-            planet_points: Total planet points
+            total_planet_points: Total planet points
         """
         try:
             # Prepare batch update requests
@@ -683,11 +744,36 @@ Return ONLY a JSON object with this exact format (no additional text):
                 {'range': f'{self.SINGLE_TEMPLATE_SHEET}!I14', 'values': [[summary_data.get('outstanding', 0)]]}
             ])
             
-            # Planet points (D26)
-            earned_pp = f": {planet_points}"
+            # Total Planet points (D26)
+            earned_pp = f": {total_planet_points}"
             updates.append({
                 'range': f'{self.SINGLE_TEMPLATE_SHEET}!D26',
                 'values': [[earned_pp]]
+            })
+
+            # Planet points redeemed (D27)
+            redeemed_pp = f": -"
+            updates.append({
+                'range': f'{self.SINGLE_TEMPLATE_SHEET}!D27',
+                'values': [[redeemed_pp]]
+            })
+            # Planet points expiring (D28)
+            expiring_pp = f": -"
+            updates.append({
+                'range': f'{self.SINGLE_TEMPLATE_SHEET}!D28',
+                'values': [[expiring_pp]]
+            })
+            # Planet points expired (D29)
+            expired_pp = f": -"
+            updates.append({
+                'range': f'{self.SINGLE_TEMPLATE_SHEET}!D29',
+                'values': [[expired_pp]]
+            })
+            # Planet points summary (D30)
+            sum_pp = f": {total_planet_points}"
+            updates.append({
+                'range': f'{self.SINGLE_TEMPLATE_SHEET}!D30',
+                'values': [[sum_pp]]
             })
             
             # Contract header (A16)
@@ -696,12 +782,35 @@ Return ONLY a JSON object with this exact format (no additional text):
                 'range': f'{self.SINGLE_TEMPLATE_SHEET}!A16',
                 'values': [[contract_header]]
             })
+
+            # Add BALANCE + Planet Point summary row
+            updates.append({
+                'range': f'{self.SINGLE_TEMPLATE_SHEET}!G18',
+                'values': [[summary_data.get('outstanding', 0), f"{total_planet_points} PP"]]
+            })
             
             # Batch update all cells (except invoice details)
             self.sheets_client.batch_update(updates, sheet_id=spreadsheet_id)
 
+            ### Create lookup map for quick access: invoice_number -> points
+            invoice_pp_map = {}
+            if point_data:
+                for pp_row in point_data:
+                    invoice_no = str(pp_row.get('invoice_number', '')).strip()
+                    points = pp_row.get('points', None)
+                    if invoice_no and points is not None:
+                        invoice_pp_map[invoice_no] = float(points)
+
+
             ### Invoice details - insert rows after contract header row 16
             if detail_data:
+
+                # Map Points to Inv
+                def pp(inv_no):
+                    pt = invoice_pp_map.get(inv_no.strip())
+                    if pt is None:
+                        return "    "        # no planet points for this invoice
+                    return f"+ {pt:.2f} PP"
 
                 # --- NORMALIZE DATE ---
                 def normalize_date(val):
@@ -756,62 +865,72 @@ Return ONLY a JSON object with this exact format (no additional text):
                 sorted_details = invoices + receipts
 
                 # Total rows needed: detail rows + 1 balance summary row
-                num_rows_to_insert = 2 * len(sorted_details)
-
-                # Insert rows starting at row 17 (after contract header at row 16)
-                self.insert_rows_with_formatting(
-                    spreadsheet_id=spreadsheet_id,
-                    sheet_name=self.SINGLE_TEMPLATE_SHEET,
-                    start_row=17,
-                    num_rows=num_rows_to_insert - 1,
-                    source_row=17  # Copy formatting from detail row 17
-                )
+                #num_rows_to_insert = 2 * len(sorted_details)
 
                 # Fill the detail rows with data (same structure as before)
                 detail_rows = []
+                running_balance = summary_data.get("opening_balance", 0)  # or 0 if none
+
                 for detail in sorted_details:
                     invoice_no = detail.get('invoice no', '')
                     receipt_no = detail.get('receipt no', '')
-                    
-                    # Case 1: Invoice with receipt
+                    invoiced = float(detail.get('invoiced amount') or 0)
+                    paid = float(detail.get('paid amount') or 0)
+
+                    # Case 1: Invoice with receipt → produce *two* rows
+
                     if invoice_no and invoice_no != "Missing Invoice" and receipt_no and receipt_no != "-":
                         # Invoice row
+                        running_balance += invoiced
                         invoice_row = [
-                            detail.get('month', ''),
-                            invoice_no + f"    " + detail.get('payment status', ''),
-                            "",
-                            "",
-                            detail.get('invoiced amount', ''),
-                            "",  # paid amount empty
+                            detail.get('month', ''),                          # A
+                            invoice_no + f"    " + detail.get('payment status', ''),  # B
+                            "",                                               # C
+                            "",                                               # D
+                            invoiced,                                         # E
+                            "",                                               # F
+                            running_balance,                                  # G (computed)
+                            pp(invoice_no)
                         ]
                         detail_rows.append(invoice_row)
 
                         # Receipt row
+                        running_balance -= paid
                         receipt_row = [
                             detail.get('paid at', ''),
                             receipt_no + f" for " + invoice_no,
                             "",
                             "",
                             "",
-                            detail.get('paid amount', ''),
+                            paid,
+                            running_balance,
+                            "    "
                         ]
                         detail_rows.append(receipt_row)
 
                     # Case 2: Invoice without receipt
-                    elif invoice_no and invoice_no != "Missing Invoice" and (not receipt_no or receipt_no == "-"):
+                    elif invoice_no and invoice_no != "Missing Invoice":
+                        running_balance += invoiced - paid
                         row = [
                             detail.get('month', ''),
                             invoice_no + f"    " + detail.get('payment status', ''),
                             "",
                             "",
-                            detail.get('invoiced amount', ''),
-                            detail.get('paid amount', ''),
+                            invoiced,
+                            paid,
+                            running_balance,
+                            pp(invoice_no)
                         ]
                         detail_rows.append(row)
 
-                # Add BALANCE summary row
-                balance_row = ['', '', '', '', '', 'BALANCE:', summary_data.get('outstanding', 0), planet_points]
-                detail_rows.append(balance_row)
+                # Insert rows starting at row 17 (after contract header at row 16)
+                self.insert_rows_with_formatting(
+                    spreadsheet_id=spreadsheet_id,
+                    sheet_name=self.SINGLE_TEMPLATE_SHEET,
+                    start_row=18,
+                    num_rows=len(detail_rows) - 1,
+                    source_row=17  # template row already has formulas
+                )
 
                 # Update the data in the inserted rows
                 detail_updates = [{
@@ -832,7 +951,7 @@ Return ONLY a JSON object with this exact format (no additional text):
         contracts_data: List[Dict],
         summary_data: Dict,
         details_by_contract: Dict[str, List[Dict]],
-        planet_points: float
+        total_planet_points: float
     ):
         """
         Fill Multi template with data from multiple contracts using Google Sheets API.
@@ -842,7 +961,7 @@ Return ONLY a JSON object with this exact format (no additional text):
             contracts_data: List of contract information dictionaries
             summary_data: Summary totals dictionary (summed across all contracts)
             details_by_contract: Dictionary mapping contract_id to invoice details
-            planet_points: Total planet points
+            total_planet_points: Total planet points
         """
         try:
             # Use first contract's info for customer details
@@ -889,7 +1008,7 @@ Return ONLY a JSON object with this exact format (no additional text):
             # Planet points (D29)
             updates.append({
                 'range': f'{self.MULTI_TEMPLATE_SHEET}!D29',
-                'values': [[planet_points]]
+                'values': [[total_planet_points]]
             })
 
             # Batch update all cells (except invoice details)
@@ -926,7 +1045,7 @@ Return ONLY a JSON object with this exact format (no additional text):
 
             if all_rows:
                 # Add BALANCE summary row
-                balance_row = ['', '', '', '', 'BALANCE:', summary_data.get('outstanding', 0), planet_points]
+                balance_row = ['', '', '', '', 'BALANCE:', summary_data.get('outstanding', 0), total_planet_points]
                 all_rows.append(balance_row)
                 balance_row_index = current_row - 1  # Track balance row (0-indexed)
 
@@ -1109,141 +1228,59 @@ Return ONLY a JSON object with this exact format (no additional text):
             logger.warning(f"Could not cleanup working copy: {e}")
 
     def insert_rows_with_formatting(
-        self,
-        spreadsheet_id: str,
-        sheet_name: str,
-        start_row: int,
-        num_rows: int,
-        source_row: int
-    ):
-        """
-        Insert rows and copy full formatting (including borders) from a source row.
+            self,
+            spreadsheet_id: str,
+            sheet_name: str,
+            start_row: int,
+            num_rows: int,
+            source_row: int
+            ):
+        import gspread, requests, os, logging
+        logger = logging.getLogger(__name__)
 
-        Args:
-            spreadsheet_id: Spreadsheet ID
-            sheet_name: Name of the sheet
-            start_row: Row index where to insert (1-indexed)
-            num_rows: Number of rows to insert
-            source_row: Row index to copy formatting from (1-indexed)
-        """
         try:
-            # Get sheet GID
-            sheet_info = self.sheets_client.get_sheet_info(spreadsheet_id)
-            sheet_gid = None
+            # --- gspread: connect ---
+            json_path = os.path.join(os.path.dirname(__file__), "smart-rental-478516-a8bff3c083a8.json")
+            gc = gspread.service_account(filename=json_path)
+            sh = gc.open_by_key(spreadsheet_id)
+            ws = sh.worksheet(sheet_name)
 
-            for sheet in sheet_info.get('sheets', []):
-                if sheet.get('title') == sheet_name:
-                    sheet_gid = sheet.get('sheet_id')
+            # --- get sheetId via requests (needed for batchUpdate) ---
+            token = self.sheets_client._get_access_token()
+            headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+            sheet_info_url = f"https://sheets.googleapis.com/v4/spreadsheets/{spreadsheet_id}?fields=sheets.properties"
+            sheet_data = requests.get(sheet_info_url, headers=headers).json()
+
+            sheet_id = None
+            for s in sheet_data.get("sheets", []):
+                if s["properties"]["title"] == sheet_name:
+                    sheet_id = s["properties"]["sheetId"]
                     break
 
-            if sheet_gid is None:
-                logger.error(f"Sheet '{sheet_name}' not found")
+            if sheet_id is None:
+                logger.error(f"Sheet '{sheet_name}' not found. Available sheets: {[s['properties']['title'] for s in sheet_data.get('sheets',[])]}")
                 return
 
-            service = self.sheets_client.get_service()
-            if not service:
-                logger.error("Failed to get Sheets service")
-                return
+            # --- insert empty rows ---
+            insert_payload = {
+                "requests": [
+                    {
+                        "insertDimension": {
+                            "range": {
+                                "sheetId": sheet_id,
+                                "dimension": "ROWS",
+                                "startIndex": start_row - 1,
+                                "endIndex": start_row - 1 + num_rows
+                            },
+                            "inheritFromBefore": True
+                        }
+                    }
+                ]
+            }
+            batch_url = f"https://sheets.googleapis.com/v4/spreadsheets/{spreadsheet_id}:batchUpdate"
+            requests.post(batch_url, headers=headers, json=insert_payload)
 
-            requests_list = []
-
-            # --- STEP 1: Insert empty rows ---
-            requests_list.append({
-                'insertDimension': {
-                    'range': {
-                        'sheetId': sheet_gid,
-                        'dimension': 'ROWS',
-                        'startIndex': start_row,
-                        'endIndex': start_row + num_rows
-                    },
-                    'inheritFromBefore': False
-                }
-            })
-
-            # --- STEP 2: Copy general formatting from source row ---
-            requests_list.append({
-                'copyPaste': {
-                    'source': {
-                        'sheetId': sheet_gid,
-                        'startRowIndex': source_row - 1,
-                        'endRowIndex': source_row,
-                        'startColumnIndex': 0,
-                        'endColumnIndex': 10  # A–J
-                    },
-                    'destination': {
-                        'sheetId': sheet_gid,
-                        'startRowIndex': start_row,
-                        'endRowIndex': start_row + num_rows,
-                        'startColumnIndex': 0,
-                        'endColumnIndex': 10
-                    },
-                    'pasteType': 'PASTE_FORMAT'
-                }
-            })
-
-            # --- STEP 2.1: Copy formulas from source row ---
-            requests_list.append({
-                'copyPaste': {
-                    'source': {
-                        'sheetId': sheet_gid,
-                        'startRowIndex': source_row - 1,
-                        'endRowIndex': source_row,
-                        'startColumnIndex': 0,
-                        'endColumnIndex': 10
-                    },
-                    'destination': {
-                        'sheetId': sheet_gid,
-                        'startRowIndex': start_row,
-                        'endRowIndex': start_row + num_rows,
-                        'startColumnIndex': 0,
-                        'endColumnIndex': 10
-                    },
-                    'pasteType': 'PASTE_FORMULA'  # copy formulas only
-                }
-            })
-
-            # --- STEP 3: Retrieve formatting from the source row ---
-            fmt_info = service.spreadsheets().get(
-                spreadsheetId=spreadsheet_id,
-                ranges=[f"{sheet_name}!A{source_row}:J{source_row}"],
-                fields="sheets.data.rowData.values.userEnteredFormat"
-            ).execute()
-
-            row_data = fmt_info['sheets'][0]['data'][0]['rowData'][0]['values']
-
-            # Safety: ensure 10 cells exist
-            if len(row_data) < 10:
-                logger.warning(f"Source row {source_row} returned only {len(row_data)} cells; padding missing cells.")
-                row_data += [{}] * (10 - len(row_data))
-
-            # --- STEP 4: Apply the borders cell-by-cell to all new rows ---
-            for r in range(num_rows):
-                for col_idx in range(10):  # A-J
-                    borders = row_data[col_idx].get('userEnteredFormat', {}).get('borders')
-                    if borders:
-                        requests_list.append({
-                            "updateBorders": {
-                                "range": {
-                                    "sheetId": sheet_gid,
-                                    "startRowIndex": start_row - 1 + r,
-                                    "endRowIndex": start_row - 1 + r + 1,
-                                    "startColumnIndex": col_idx,
-                                    "endColumnIndex": col_idx + 1
-                                },
-                                **borders  # Apply the exact same borders!
-                            }
-                        })
-
-            # --- EXECUTE ALL REQUESTS ---
-            service.spreadsheets().batchUpdate(
-                spreadsheetId=spreadsheet_id,
-                body={"requests": requests_list}
-            ).execute()
-
-            logger.info(
-                f"Inserted {num_rows} rows at row {start_row} "
-                f"with full formatting (incl. borders) from row {source_row}"
-            )
+            logger.info(f"Inserted {num_rows} rows at {start_row} and copied formula from G{source_row}")
 
         except Exception as e:
             logger.error(f"Error inserting rows with formatting: {e}", exc_info=True)
@@ -1319,4 +1356,5 @@ Return ONLY a JSON object with this exact format (no additional text):
 
         except Exception as e:
             logger.error(f"Error applying row formatting: {e}", exc_info=True)
+
 
